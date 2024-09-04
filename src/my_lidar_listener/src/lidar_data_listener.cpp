@@ -22,7 +22,7 @@ void saveAccumulatedPointCloud()
     // 获取当前时间并构建文件名
     std::time_t now = std::time(nullptr);
     std::stringstream fileName;
-    fileName << "/home/xnb/rosbag_data/livox/accumulated_pointcloud_"
+    fileName << "/home/xnb/rosbag_data/livox/100cm/pc_"
              << std::put_time(std::localtime(&now), "%Y-%m-%d_%H-%M-%S")
              << ".pcd";
 
@@ -82,8 +82,8 @@ int main(int argc, char** argv)
     ros::NodeHandle nh;
 
     // 设置保存间隔（秒）和最大保存次数
-    save_interval = 3;  // 每隔1秒保存一次
-    max_saves     = 6;  // 最多保存5次
+    save_interval = 3;   // 每隔几秒保存一次
+    max_saves     = 11;  // 最多保存5次
 
     // 获取开始时间
     start_time = std::chrono::steady_clock::now();
