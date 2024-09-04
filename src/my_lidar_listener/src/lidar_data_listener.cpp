@@ -4,7 +4,8 @@
 #include <sensor_msgs/PointCloud2.h>
 #include "pointcloud_processor.h"
 
-PointCloudProcessor processor(10, 3.0);  // 设置最大保存次数和保存间隔
+PointCloudProcessor processor(11, 10);  // 设置最大保存次数和每组累积10帧点云
+int frame_count = 0;
 
 void lidarDataListenerCallback(
     const sensor_msgs::PointCloud2ConstPtr& cloud_msg)
@@ -13,17 +14,19 @@ void lidarDataListenerCallback(
         new pcl::PointCloud<pcl::PointXYZ>);
     pcl::fromROSMsg(*cloud_msg, *cloud);
 
+    // 计算发布频率
+    processor.calculatePublishFrequency();
+
     // 累积点云
     processor.accumulatePointCloud(cloud);
     ROS_INFO("Received point cloud with %lu points", cloud->size());
-    // 在保存前对累积的点云进行体素栅格滤波
-    processor.applyVoxelGridFilter(0.005f);  // 使用叶大小为 0.05f 的滤波器
-    // processor.applyStatisticalOutlierRemoval(10, 1);
 
-    // 检查是否需要保存点云
-    if (processor.shouldSave())
+    frame_count++;
+
+    // 如果达到组帧数量，保存点云
+    if (frame_count % 10 == 0)
     {
-        applyStatisticalOutlierRemoval processor.savePointCloud();
+        processor.savePointCloud(frame_count / 10);  // 保存累积的组帧点云
     }
 
     // 检查是否达到最大保存次数

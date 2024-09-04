@@ -5,12 +5,15 @@
 #include <sstream>
 #include "pointcloud_processor.h"
 
-PointCloudProcessor::PointCloudProcessor(int max_saves, double save_interval)
-    : max_saves_(max_saves), save_interval_(save_interval), save_count_(0)
+PointCloudProcessor::PointCloudProcessor(int max_saves, int group_size)
+    : max_saves_(max_saves)
+    , group_size_(group_size)
+    , save_count_(0)
+    , publish_frequency_(0.0)
 {
     accumulated_cloud_ =
         pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>);
-    start_time_ = std::chrono::steady_clock::now();
+    last_timestamp_ = std::chrono::steady_clock::now();
 }
 
 PointCloudProcessor::~PointCloudProcessor() {}
@@ -21,11 +24,12 @@ void PointCloudProcessor::accumulatePointCloud(
     *accumulated_cloud_ += *cloud;
 }
 
-void PointCloudProcessor::savePointCloud()
+void PointCloudProcessor::savePointCloud(int frame_group)
 {
     std::time_t now = std::time(nullptr);
     std::stringstream fileName;
-    fileName << "/home/xnb/rosbag_data/livox/test/pc_"
+    fileName << "/home/xnb/rosbag_data/livox/test_group/pc_group_"
+             << frame_group << "_"
              << std::put_time(std::localtime(&now), "%Y-%m-%d_%H-%M-%S")
              << ".pcd";
 
@@ -38,15 +42,7 @@ void PointCloudProcessor::savePointCloud()
 
     ROS_INFO("Saved accumulated point cloud to file: %s",
              fileName.str().c_str());
-    accumulated_cloud_->clear();
-    save_count_++;
-}
-
-bool PointCloudProcessor::shouldSave()
-{
-    auto elapsed = std::chrono::steady_clock::now() - start_time_;
-    return std::chrono::duration<double>(elapsed).count() >=
-           save_interval_ * (save_count_ + 1);
+    clearAccumulatedCloud();  // 清空当前累积的点云
 }
 
 bool PointCloudProcessor::hasReachedMaxSaves()
@@ -54,62 +50,18 @@ bool PointCloudProcessor::hasReachedMaxSaves()
     return save_count_ >= max_saves_;
 }
 
-// 体素栅格滤波：减少点云密度，保持关键点特征
-void PointCloudProcessor::applyVoxelGridFilter(float leaf_size)
+void PointCloudProcessor::clearAccumulatedCloud()
 {
-    pcl::VoxelGrid<pcl::PointXYZ> sor;
-    sor.setInputCloud(accumulated_cloud_);
-    sor.setLeafSize(leaf_size, leaf_size, leaf_size);
-    pcl::PointCloud<pcl::PointXYZ>::Ptr filtered_cloud(
-        new pcl::PointCloud<pcl::PointXYZ>);
-    sor.filter(*filtered_cloud);
-    accumulated_cloud_ = filtered_cloud;  // 更新累积点云
+    accumulated_cloud_->clear();
 }
-// 统计去噪：移除离群点和噪声点
-void PointCloudProcessor::applyStatisticalOutlierRemoval(int meanK,
-                                                         double stddevMulThresh)
-{
-    pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor;
-    sor.setInputCloud(accumulated_cloud_);
-    sor.setMeanK(meanK);                      // K 邻域的点数
-    sor.setStddevMulThresh(stddevMulThresh);  // 标准差乘数阈值
-    pcl::PointCloud<pcl::PointXYZ>::Ptr filtered_cloud(
-        new pcl::PointCloud<pcl::PointXYZ>);
-    sor.filter(*filtered_cloud);
-    accumulated_cloud_ = filtered_cloud;
-}
-// 平面分割：分割出主要平面，用于移除地面等
-void PointCloudProcessor::applyPlaneSegmentation(double distanceThreshold)
-{
-    pcl::SACSegmentation<pcl::PointXYZ> seg;
-    pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
-    pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
-    seg.setOptimizeCoefficients(true);
-    seg.setModelType(pcl::SACMODEL_PLANE);
-    seg.setMethodType(pcl::SAC_RANSAC);
-    seg.setDistanceThreshold(distanceThreshold);
-    seg.setInputCloud(accumulated_cloud_);
-    seg.segment(*inliers, *coefficients);
 
-    // 提取平面
-    pcl::ExtractIndices<pcl::PointXYZ> extract;
-    extract.setInputCloud(accumulated_cloud_);
-    extract.setIndices(inliers);
-    extract.setNegative(true);  // 保留非平面部分
-    pcl::PointCloud<pcl::PointXYZ>::Ptr segmented_cloud(
-        new pcl::PointCloud<pcl::PointXYZ>);
-    extract.filter(*segmented_cloud);
-    accumulated_cloud_ = segmented_cloud;
-}
-// 计算法线：为点云数据计算法线，用于进一步分析。
-void PointCloudProcessor::computeNormals()
+void PointCloudProcessor::calculatePublishFrequency()
 {
-    pcl::NormalEstimation<pcl::PointXYZ, pcl::Normal> ne;
-    pcl::PointCloud<pcl::Normal>::Ptr normals(new pcl::PointCloud<pcl::Normal>);
-    pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(
-        new pcl::search::KdTree<pcl::PointXYZ>());
-    ne.setSearchMethod(tree);
-    ne.setInputCloud(accumulated_cloud_);
-    ne.setKSearch(50);  // 设置邻域点数量
-    ne.compute(*normals);
+    auto current_time = std::chrono::steady_clock::now();
+    auto duration     = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        current_time - last_timestamp_)
+                        .count();
+    publish_frequency_ = 1000.0 / duration;  // 转换为 Hz
+    ROS_INFO("PointCloud Publish Frequency: %.2f Hz", publish_frequency_);
+    last_timestamp_ = current_time;  // 更新时间戳
 }
